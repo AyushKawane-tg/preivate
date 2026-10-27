@@ -1,127 +1,154 @@
+
 import os
 import random
 import subprocess
 from datetime import datetime, timedelta
+from pathlib import Path
+
 
 def get_positive_int(prompt, default=20):
     while True:
+        user_input = input(f"{prompt} (default {default}): ").strip()
+
+        if not user_input:
+            return default
+
         try:
-            user_input = input(f"{prompt} (default {default}): ")
-            if not user_input.strip():
-                return default
             value = int(user_input)
             if value > 0:
                 return value
-            else:
-                print("Please enter a positive integer.")
+            print("Please enter a positive integer.")
         except ValueError:
-            print("Invalid input. Please enter a valid integer.")
+            print("Invalid input. Enter a valid integer.")
+
 
 def get_repo_path(prompt, default="."):
     while True:
-        user_input = input(f"{prompt} (default current directory): ")
-        if not user_input.strip():
-            return default
-        if os.path.isdir(user_input):
-            return user_input
-        else:
-            print("Directory does not exist. Please enter a valid path.")
+        user_input = input(
+            f"{prompt} (default current directory): "
+        ).strip()
+
+        path = Path(user_input or default).expanduser().resolve()
+
+        if not path.is_dir():
+            print("Directory does not exist.")
+            continue
+
+        try:
+            subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                cwd=path,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return path
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print("Please select a valid Git repository.")
+
 
 def get_filename(prompt, default="data.txt"):
-    user_input = input(f"{prompt} (default {default}): ")
-    if not user_input.strip():
-        return default
-    return user_input
+    while True:
+        name = input(f"{prompt} (default {default}): ").strip() or default
+        path = Path(name)
 
-def random_date_in_last_year():
-    today = datetime.now()
-    start_date = today - timedelta(days=365)
-    random_days = random.randint(0, 364)
-    random_seconds = random.randint(0, 23*3600 + 3599)
-    commit_date = start_date + timedelta(days=random_days, seconds=random_seconds)
-    return commit_date
+        if path.is_absolute() or ".." in path.parts:
+            print("Use a relative filename inside the repository.")
+            continue
 
-def make_commit(date, repo_path, filename, message="graph-greener!"):
-    filepath = os.path.join(repo_path, filename)
-    with open(filepath, "a") as f:
-        f.write(f"Commit at {date.isoformat()}\n")
-    subprocess.run(["git", "add", filename], cwd=repo_path)
+        return path
+
+
+def random_date_in_previous_month():
+    today = datetime.now().astimezone()
+
+    # First day of the current month
+    first_this_month = today.replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+
+    # Last moment of the previous month
+    end_previous_month = first_this_month - timedelta(seconds=1)
+
+    # First moment of the previous month
+    start_previous_month = end_previous_month.replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+
+    total_seconds = int(
+        (end_previous_month - start_previous_month).total_seconds()
+    )
+
+    return start_previous_month + timedelta(
+        seconds=random.randint(0, total_seconds)
+    )
+
+
+def make_commit(date, repo_path, filename, message):
+    filepath = repo_path / filename
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+
+    with filepath.open("a", encoding="utf-8") as file:
+        file.write(f"Test record: {date.isoformat()}\n")
+
+    subprocess.run(
+        ["git", "add", "--", filename.as_posix()],
+        cwd=repo_path,
+        check=True,
+    )
+
+    # Set the Git author and committer dates for testing.
     env = os.environ.copy()
-    date_str = date.strftime("%Y-%m-%dT%H:%M:%S")
+    date_str = date.strftime("%Y-%m-%dT%H:%M:%S%z")
     env["GIT_AUTHOR_DATE"] = date_str
     env["GIT_COMMITTER_DATE"] = date_str
-    subprocess.run(["git", "commit", "-m", message], cwd=repo_path, env=env)
+
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=repo_path,
+        env=env,
+        check=True,
+    )
+
 
 def main():
-    print("="*60)
-    print("Welcome to graph-greener - GitHub Contribution Graph Commit Generator")
-    print("="*60)
-    print("This tool will help you fill your GitHub contribution graph with custom commits.\n")
+    print("=" * 60)
+    print("Previous-Month Git History Test")
+    print("=" * 60)
 
-    num_commits = get_positive_int("How many commits do you want to make", 20)
-    repo_path = get_repo_path("Enter the path to your local git repository", ".")
-    filename = get_filename("Enter the filename to modify for commits", "data.txt")
+    try:
+        num_commits = get_positive_int("Number of commits", 20)
+        repo_path = get_repo_path("Git repository path", ".")
+        filename = get_filename("Filename to modify", "data.txt")
+        message = input("Commit message: ").strip() or "Test Git history"
 
-    print(f"\nMaking {num_commits} commits in repo: {repo_path}\nModifying file: {filename}\n")
+        print(
+            f"\nCreating {num_commits} commits with dates "
+            "randomly selected from the previous month.\n"
+        )
 
-    for i in range(num_commits):
-        commit_date = random_date_in_last_year()
-        print(f"[{i+1}/{num_commits}] Committing at {commit_date.strftime('%Y-%m-%d %H:%M:%S')}")
-        make_commit(commit_date, repo_path, filename)
+        for i in range(num_commits):
+            commit_date = random_date_in_previous_month()
+            print(
+                f"[{i + 1}/{num_commits}] "
+                f"{commit_date.strftime('%Y-%m-%d %H:%M:%S %z')}"
+            )
+            make_commit(commit_date, repo_path, filename, message)
 
-    print("\nPushing commits to your remote repository...")
-    subprocess.run(["git", "push"], cwd=repo_path)
-    print("✅ All done! Check your GitHub contribution graph in a few minutes.\n")
-    print("Tip: Use a dedicated repository for best results. Happy coding!")
+        print("\nAll commits created successfully.")
+
+        push = input("Push to remote repository? (y/n): ").strip().lower()
+        if push == "y":
+            subprocess.run(["git", "push"], cwd=repo_path, check=True)
+            print("Push completed successfully.")
+
+    except subprocess.CalledProcessError as error:
+        print(f"\nGit command failed: {error}")
+    except (OSError, ValueError) as error:
+        print(f"\nError: {error}")
+    except KeyboardInterrupt:
+        print("\nOperation cancelled.")
+
 
 if __name__ == "__main__":
-    main()Commit at 2026-01-24T09:19:11.530071
-Commit at 2026-01-14T18:55:48.254409
-Commit at 2026-07-21T10:10:30.009073
-Commit at 2026-05-31T14:02:00.685769
-Commit at 2026-01-04T04:22:49.363570
-Commit at 2026-03-21T12:12:34.909865
-Commit at 2026-06-29T22:59:33.593429
-Commit at 2026-01-24T02:34:52.227106
-Commit at 2026-07-11T04:46:30.825335
-Commit at 2025-11-28T18:04:16.453007
-Commit at 2026-09-24T19:02:21.097204
-Commit at 2026-05-11T23:40:52.720225
-Commit at 2026-01-10T03:45:15.403645
-Commit at 2026-01-19T21:18:19.046543
-Commit at 2026-06-03T19:42:22.700497
-Commit at 2026-02-12T18:07:31.379455
-Commit at 2026-08-07T22:56:26.002334
-Commit at 2026-01-12T19:01:52.639118
-Commit at 2026-03-24T22:26:04.262691
-Commit at 2026-10-14T15:52:41.936232
-Commit at 2026-05-02T06:17:38.601487
-Commit at 2025-12-08T09:20:50.249429
-Commit at 2026-06-09T15:27:13.902971
-Commit at 2026-08-25T11:45:35.593854
-Commit at 2026-02-11T01:17:09.254008
-Commit at 2026-08-31T05:35:02.878229
-Commit at 2025-12-16T22:03:05.467933
-Commit at 2026-05-24T06:48:36.161751
-Commit at 2025-12-15T19:25:15.844970
-Commit at 2026-02-26T11:42:31.514366
-Commit at 2025-11-20T20:13:41.185529
-Commit at 2026-05-10T12:34:50.835919
-Commit at 2025-12-15T08:18:01.471945
-Commit at 2026-09-14T00:18:40.144295
-Commit at 2026-07-05T08:24:29.775392
-Commit at 2026-03-28T10:22:30.418685
-Commit at 2025-11-29T11:09:24.029640
-Commit at 2025-11-19T23:36:50.658338
-Commit at 2026-08-07T21:03:20.247052
-Commit at 2026-10-21T01:06:09.741167
-Commit at 2025-12-10T23:02:46.330923
-Commit at 2026-08-27T18:49:04.911052
-Commit at 2026-08-21T08:41:40.534708
-Commit at 2026-08-15T19:15:52.165192
-Commit at 2026-09-14T09:56:08.777567
-Commit at 2025-12-17T03:33:17.398172
-Commit at 2026-06-02T05:08:50.002725
-Commit at 2026-01-16T11:58:19.606762
-Commit at 2026-05-27T09:51:08.226818
-Commit at 2026-10-15T10:29:22.835704
+    main()
